@@ -33,8 +33,8 @@ class SIAFD : public SSB_Modifier
   friend class SIAFD_h_x;
   friend class SIAFD_h_y;
 public:
-  SIAFD(IceGrid &g, EnthalpyConverter &e, const NCConfigVariable &c)
-    : SSB_Modifier(g, e, c), WIDE_STENCIL(2) { allocate(); }
+  SIAFD(IceGrid &g, EnthalpyConverter &e, const NCConfigVariable &c, PetscBool refinement_flag=PETSC_FALSE)
+    : SSB_Modifier(g, e, c,refinement_flag), WIDE_STENCIL(2) { allocate(); }
 
   virtual ~SIAFD();
 

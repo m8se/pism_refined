@@ -103,8 +103,8 @@ class PISMVars;
  */
 class PISMComponent {
 public:
-  PISMComponent(IceGrid &g, const NCConfigVariable &conf)
-    : grid(g), config(conf) {}
+  PISMComponent(IceGrid &g, const NCConfigVariable &conf, IceGrid *g_ref=NULL)
+    : grid(g), config(conf), grid_refined(g_ref) {}
   virtual ~PISMComponent() {}
 
   virtual PetscErrorCode init(PISMVars &vars) = 0;
@@ -133,7 +133,8 @@ public:
   // virtual void get_scalar_diagnostics(map<string, PISMDiagnostic_Scalar*> &/*dict*/) {}
 protected:
   virtual PetscErrorCode find_pism_input(string &filename, bool &regrid, int &start);
-  IceGrid &grid;
+  IceGrid &grid,
+				*grid_refined;
   const NCConfigVariable &config;
 };
 
@@ -146,8 +147,8 @@ protected:
 class PISMComponent_Diag : public PISMComponent
 {
 public:
-  PISMComponent_Diag(IceGrid &g, const NCConfigVariable &conf)
-    : PISMComponent(g, conf) {}
+  PISMComponent_Diag(IceGrid &g, const NCConfigVariable &conf, IceGrid *g_ref=NULL)
+    : PISMComponent(g, conf, g_ref) {}
   virtual ~PISMComponent_Diag() {}
 
   virtual PetscErrorCode update(bool /*fast*/)

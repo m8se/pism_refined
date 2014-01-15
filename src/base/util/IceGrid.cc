@@ -25,8 +25,9 @@
 #include "NCVariable.hh"
 
 
+
 IceGrid::IceGrid(MPI_Comm c, PetscMPIInt r, PetscMPIInt s,
-		 const NCConfigVariable &conf)
+		 const NCConfigVariable &conf, PetscMPIInt refinement_factor)
   : config(conf), com(c), rank(r), size(s){ 
 
   // The grid in symmetric with respect to zero by default.
@@ -61,14 +62,14 @@ IceGrid::IceGrid(MPI_Comm c, PetscMPIInt r, PetscMPIInt s,
     PISMEnd();
   }
 
-  Lx  = config.get("grid_Lx");
-  Ly  = config.get("grid_Ly");
+  Lx  = config.get("grid_Lx");///refinement_factor;
+  Ly  = config.get("grid_Ly");///refinement_factor;
   Lz  = config.get("grid_Lz");
 
   lambda = config.get("grid_lambda");
 
-  Mx  = static_cast<PetscInt>(config.get("grid_Mx"));
-  My  = static_cast<PetscInt>(config.get("grid_My"));
+  Mx  = (static_cast<PetscInt>(config.get("grid_Mx"))-1)*refinement_factor+1;
+  My  = (static_cast<PetscInt>(config.get("grid_My"))-1)*refinement_factor+1;
   Mz  = static_cast<PetscInt>(config.get("grid_Mz"));
 
   Nx = Ny = 0;			// will be set to a correct value in createDA()
@@ -93,6 +94,8 @@ IceGrid::IceGrid(MPI_Comm c, PetscMPIInt r, PetscMPIInt s,
   // time->init() will be called later (in IceModel::set_grid_defaults() or
   // PIO::get_grid()).
 }
+
+
 
 
 IceGrid::~IceGrid() {

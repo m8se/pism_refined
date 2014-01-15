@@ -167,7 +167,7 @@ PetscErrorCode IceModel::set_grid_defaults() {
 /*! Reads all of -Mx, -My, -Mz, -Mbz, -Lx, -Ly, -Lz, -Lbz, -z_spacing and
     -zb_spacing. Sets corresponding grid parameters.
  */
-PetscErrorCode IceModel::set_grid_from_options() {
+PetscErrorCode IceModel::set_grid_from_options(IceGrid &grid,PetscInt refinement) {
   PetscErrorCode ierr;
   bool Mx_set, My_set, Mz_set, Lx_set, Ly_set, Lz_set,
     z_spacing_set, periodicity_set;
@@ -193,6 +193,11 @@ PetscErrorCode IceModel::set_grid_from_options() {
 			grid.Mx, Mx_set); CHKERRQ(ierr);
   ierr = PISMOptionsInt("-Mz", "Number of grid points in the Z (vertical) direction in the ice",
 			grid.Mz, Mz_set); CHKERRQ(ierr);
+if (refinement!=1){
+grid.My=(grid.My-1)*refinement+1;
+grid.Mx=(grid.Mx-1)*refinement+1;
+}
+	
 
   vector<double> x_range, y_range;
   bool x_range_set, y_range_set;
@@ -274,7 +279,8 @@ PetscErrorCode IceModel::set_grid_from_options() {
 
   No memory allocation should happen here.
  */
-PetscErrorCode IceModel::grid_setup() {
+PetscErrorCode IceModel::
+grid_setup(IceGrid& grid ,PetscInt refinement) {
   PetscErrorCode ierr;
   bool i_set;
   string filename;
@@ -289,7 +295,6 @@ PetscErrorCode IceModel::grid_setup() {
   // Check if we are initializing from a PISM output file:
   ierr = PISMOptionsString("-i", "Specifies a PISM input file",
 			   filename, i_set); CHKERRQ(ierr);
-
   if (i_set) {
     PIO nc(grid.com, grid.rank, grid.config.get_string("output_format"));
     string source;
@@ -351,6 +356,7 @@ PetscErrorCode IceModel::grid_setup() {
 
     ierr = nc.close(); CHKERRQ(ierr);
 
+
     // These options are ignored because we're getting *all* the grid
     // parameters from a file.
     ierr = ignore_option(grid.com, "-Mx");    CHKERRQ(ierr);
@@ -364,7 +370,7 @@ PetscErrorCode IceModel::grid_setup() {
     ierr = ignore_option(grid.com, "-zb_spacing"); CHKERRQ(ierr);
   } else {
     ierr = set_grid_defaults(); CHKERRQ(ierr);
-    ierr = set_grid_from_options(); CHKERRQ(ierr);
+    ierr = set_grid_from_options(grid, refinement); CHKERRQ(ierr);
   }
 
   bool Nx_set, Ny_set;
@@ -690,7 +696,45 @@ PetscErrorCode IceModel::allocate_stressbalance() {
       ierr = stress_balance->set_basal_melt_rate(&vbmr); CHKERRQ(ierr);
     }
   }
+ if(config.get_flag("mesh_refinement")){
+	if (stress_balance == NULL) {
+    {
+      ShallowStressBalance *my_stress_balance_ref;
+      if (use_ssa_velocity) {
+        string ssa_method = config.get_string("ssa_method");
+        if( ssa_method == "fd" ) {
+			//regular Enthalpie Converter & basal resistance should be fine
+          my_stress_balance_ref = new SSAFD(*grid_refined, *basal, *EC, config); 
+        } else if(ssa_method == "fem") {
+          my_stress_balance_ref = new SSAFEM(*grid_refined, *basal, *EC, config);
+        } else {
+          SETERRQ(grid.com, 1,"SSA algorithm flag should be one of \"fd\" or \"fem\"");
+        }
+      } else {
+        my_stress_balance_ref = new SSB_Trivial(*grid_refined, *basal, *EC, config);
+      }
+      SSB_Modifier *my_modifier_ref;
+      if (do_sia) {
+        my_modifier_ref = new SIAFD(*grid_refined, *EC, config,PETSC_TRUE);
+      } else {
+        my_modifier_ref = new SSBM_Trivial(*grid_refined, *EC, config,PETSC_TRUE);
+      }
+      // ~PISMStressBalance() will de-allocate my_stress_balance and modifier.
+      stress_balance_ref = new PISMStressBalance(*grid_refined, my_stress_balance_ref,
+                                             my_modifier_ref, ocean, config );
+    }
 
+    // PISM stress balance computations are diagnostic, i.e. do not
+    // have a state that changes in time.  Therefore this call can be here
+    // and not in model_state_setup().  We don't need to re-initialize after
+    // the "diagnostic time step".
+    ierr = stress_balance_ref->init(variables); CHKERRQ(ierr);
+
+    if (config.get_flag("include_bmr_in_continuity")) {
+      ierr = stress_balance_ref->set_basal_melt_rate(vbmr_ref); CHKERRQ(ierr);
+    }
+  }
+ }  // end refined grid
   return 0;
 }
 
@@ -829,6 +873,31 @@ PetscErrorCode IceModel::allocate_internal_objects() {
            "e.g. new values of temperature or age or enthalpy during time step",
            "", ""); CHKERRQ(ierr);
 
+
+if(config.get_flag("mesh_refinement")){
+  // various internal quantities
+  // 2d  refined work vectors
+	for (int j = 0; j < nWork2d; j++) {
+	vWork2d_ref[j]=new IceModelVec2S;
+    char namestr[30];
+    snprintf(namestr, sizeof(namestr), "work_vector_refined_%d", j);
+    ierr = vWork2d_ref[j]->create(*grid_refined, namestr, true, WIDE_STENCIL); CHKERRQ(ierr);
+	}
+		
+  vWork2dV_ref=new  IceModelVec2V;
+  ierr = vWork2dV_ref->create(grid, "vWork2dV", true); CHKERRQ(ierr);
+  ierr = vWork2dV_ref->set_attrs("internal", "velocity work vector", "", ""); CHKERRQ(ierr);
+
+  // 3d work vectors
+ vWork3d_ref=new IceModelVec3;
+  ierr = vWork3d_ref->create(grid,"work_vector_3d",false); CHKERRQ(ierr);
+  ierr = vWork3d_ref->set_attrs(
+           "internal",
+           "e.g. new values of temperature or age or enthalpy during time step",
+           "", ""); CHKERRQ(ierr);
+	
+ }
+	
   return 0;
 }
 

@@ -103,7 +103,8 @@ typedef enum {NONE = 0, NOT_PERIODIC =0, X_PERIODIC = 1, Y_PERIODIC = 2, XY_PERI
  */
 class IceGrid {
 public:
-  IceGrid(MPI_Comm c, PetscMPIInt r, PetscMPIInt s, const NCConfigVariable &config);
+  IceGrid(MPI_Comm c, PetscMPIInt r, PetscMPIInt s, const NCConfigVariable &config, 
+  PetscMPIInt refinement_factor=1);
   ~IceGrid();
 
   PetscErrorCode report_parameters();

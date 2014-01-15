@@ -31,7 +31,6 @@ static char help[] =
 
 int main(int argc, char *argv[]) {
   PetscErrorCode  ierr;
-
   MPI_Comm    com;
   PetscMPIInt rank, size;
 
@@ -74,19 +73,28 @@ int main(int argc, char *argv[]) {
 
     NCConfigVariable config, overrides;
     ierr = init_config(com, rank, config, overrides, true); CHKERRQ(ierr);
-
     IceGrid g(com, rank, size, config);
-    IceModel m(g, config, overrides);
+    IceModel *m;
+	IceGrid *g_refined;
+	 if(config.get_flag("mesh_refinement")){
+       PetscInt refinement=config.get("refinement_factor"); //TODO option
+		g_refined=new IceGrid(com,rank,size,config,2); 
+	  // IceGrid g_refined(com,rank,size,config,refinement); 
+	    //create a refined mesh 
+	  // IceGrid* g_refined_Ptr
+	   //g_refined_Ptr= &g_refined
+	   m = new IceModel(g, config, overrides,g_refined);
+		 }
+	  else{
+	   m= new IceModel(g, config, overrides);
+	  }
+	    ierr = m->setExecName("pismr"); CHKERRQ(ierr);
+       ierr = m->init(); CHKERRQ(ierr);
+       ierr = m->run(); CHKERRQ(ierr); 
 
-    ierr = m.setExecName("pismr"); CHKERRQ(ierr);
-
-    ierr = m.init(); CHKERRQ(ierr);
-
-    ierr = m.run(); CHKERRQ(ierr);
-
-    ierr = verbPrintf(2,com, "... done with run\n"); CHKERRQ(ierr);
-    // provide a default output file name if no -o option is given.
-    ierr = m.writeFiles("unnamed.nc"); CHKERRQ(ierr);
+       ierr = verbPrintf(2,com, "... done with run\n"); CHKERRQ(ierr);
+       // provide a default output file name if no -o option is given.
+       ierr = m->writeFiles("unnamed.nc"); CHKERRQ(ierr);   
   }
 
   ierr = PetscFinalize(); CHKERRQ(ierr);

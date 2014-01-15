@@ -30,9 +30,9 @@ class EnthalpyConverter;
 class SSB_Modifier : public PISMComponent_Diag
 {
 public:
-  SSB_Modifier(IceGrid &g, EnthalpyConverter &e, const NCConfigVariable &c)
-    : PISMComponent_Diag(g, c), EC(e)
-  { D_max = u_max = v_max = 0.0; variables = NULL; allocate(); }
+  SSB_Modifier(IceGrid &g, EnthalpyConverter &e, const NCConfigVariable &c,PetscBool ref_flag=PETSC_FALSE)
+    : PISMComponent_Diag(g, c), EC(e), refinement_flag(ref_flag)
+  {PetscPrintf(grid.com,"Bool:%d\n\n\n",ref_flag); /*TODO test*/; D_max = u_max = v_max = 0.0; variables = NULL; allocate(); }
   virtual ~SSB_Modifier() {}
 
   virtual PetscErrorCode init(PISMVars &vars) { variables = &vars; return 0; }
@@ -43,8 +43,9 @@ public:
                                 bool fast) = 0;
 
   //! \brief Get the diffusive (SIA) vertically-averaged flux on the staggered grid.
-  virtual PetscErrorCode get_diffusive_flux(IceModelVec2Stag* &result)
-  { result = &diffusive_flux; return 0; }
+  virtual PetscErrorCode get_diffusive_flux(IceModelVec2Stag* &result,PetscBool refinement_flag=PETSC_FALSE)
+  { result = &diffusive_flux; 
+	  return 0; }
 
   //! \brief Get the max diffusivity (for the adaptive time-stepping).
   virtual PetscErrorCode get_max_diffusivity(PetscReal &result)
@@ -74,9 +75,11 @@ protected:
   EnthalpyConverter &EC;
   PetscReal D_max, u_max, v_max;
   IceModelVec2Stag diffusive_flux;
+	
   IceModelVec3 u, v, Sigma;
 
   PISMVars *variables;
+  PetscBool refinement_flag;
 };
 
 
@@ -84,7 +87,7 @@ protected:
 class SSBM_Trivial : public SSB_Modifier
 {
 public:
-  SSBM_Trivial(IceGrid &g, EnthalpyConverter &e, const NCConfigVariable &c);
+  SSBM_Trivial(IceGrid &g, EnthalpyConverter &e, const NCConfigVariable &c, PetscBool refinement_flag=PETSC_FALSE);
   virtual ~SSBM_Trivial();
 
   virtual PetscErrorCode init(PISMVars &vars);

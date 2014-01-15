@@ -43,11 +43,19 @@ PetscErrorCode SSB_Modifier::allocate() {
 	        	  "W m-3", ""); CHKERRQ(ierr);
   ierr = Sigma.set_glaciological_units("mW m-3"); CHKERRQ(ierr);
 
+if(refinement_flag==PETSC_FALSE){	
   ierr = diffusive_flux.create(grid, "diffusive_flux", true, 1); CHKERRQ(ierr);
   ierr = diffusive_flux.set_attrs("internal", 
                                   "diffusive (SIA) flux components on the staggered grid",
+                                  "", ""); CHKERRQ(ierr);}
+else{	
+	PetscPrintf(grid.com,"Hier!!!\n\n\n"); //TODO test
+	ierr = diffusive_flux.create(grid, "diffusive_flux_refined", true, 1); CHKERRQ(ierr);
+  ierr = diffusive_flux.set_attrs("internal", 
+                                  "diffusive (SIA) flux components on the staggered grid",
                                   "", ""); CHKERRQ(ierr);
-
+}
+	
   return 0;
 }
 
@@ -75,8 +83,8 @@ PetscErrorCode SSBM_Trivial::init(PISMVars &vars) {
   return 0;
 }
 
-SSBM_Trivial::SSBM_Trivial(IceGrid &g, EnthalpyConverter &e, const NCConfigVariable &c)
-  : SSB_Modifier(g, e, c)
+SSBM_Trivial::SSBM_Trivial(IceGrid &g, EnthalpyConverter &e, const NCConfigVariable &c,PetscBool refinement_flag)
+  : SSB_Modifier(g, e, c,refinement_flag)
 {
   IceFlowLawFactory ice_factory(grid.com, "", config, &EC);
 
@@ -141,6 +149,7 @@ PetscErrorCode SSBM_Trivial::update(IceModelVec2V *vel_input,
 
   // diffusive flux and maximum diffusivity
   ierr = diffusive_flux.set(0.0); CHKERRQ(ierr);
+	
   D_max = 0.0;
 
   // strain heating

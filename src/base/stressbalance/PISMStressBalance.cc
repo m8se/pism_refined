@@ -119,7 +119,7 @@ PetscErrorCode PISMStressBalance::get_advective_2d_velocity(IceModelVec2V* &resu
 
 PetscErrorCode PISMStressBalance::get_diffusive_flux(IceModelVec2Stag* &result) {
   PetscErrorCode ierr;
-  ierr = modifier->get_diffusive_flux(result); CHKERRQ(ierr);
+	ierr = modifier->get_diffusive_flux(result); CHKERRQ(ierr);
   return 0;
 }
 

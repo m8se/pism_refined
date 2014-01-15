@@ -46,6 +46,9 @@ PetscErrorCode IceModel::updateSurfaceElevationAndMask() {
 
   ierr = update_mask(); CHKERRQ(ierr);
   ierr = update_surface_elevation(); CHKERRQ(ierr);
+	 if(config.get_flag("mesh_refinement")){
+   ierr=update_glmask(); CHKERRQ(ierr);
+	 }	 
 
   if (config.get_flag("kill_icebergs")) {
     ierr = killIceBergs(); CHKERRQ(ierr);
@@ -85,6 +88,57 @@ PetscErrorCode IceModel::update_mask() {
   return 0;
 }
 
+PetscErrorCode IceModel::update_glmask() {
+  PetscErrorCode ierr;
+
+  if (ocean == PETSC_NULL) {
+    SETERRQ(grid.com, 1, "PISM ERROR: ocean == PETSC_NULL");
+  }
+
+  //MaskQuery mask(vMask);
+ 
+ierr =  vMask.begin_access(); CHKERRQ(ierr);
+ierr = vGLMask[0]->begin_access(); CHKERRQ(ierr);
+ierr = vGLMask[1]->begin_access(); CHKERRQ(ierr);
+ierr = vGLMask[0]->copy_to(*vGLMask[1]); CHKERRQ(ierr);	
+  
+  for (PetscInt   i = grid.xs ; i < grid.xs+grid.xm ; ++i) {
+    for (PetscInt j = grid.ys ; j < grid.ys+grid.ym ; ++j) {
+	PetscBool found= PETSC_FALSE;
+	if (vMask(i,j)==2){
+		for (PetscInt k=-1;k<2; ++k){
+			for (PetscInt l=-1;l<2; ++l){
+			if ((k==0)&&(l==0))continue;
+			if (vMask(i+k,j+l)==3){
+ 			 (*vGLMask[0])(i, j) =1; found= PETSC_TRUE; break;}
+			}// l for loop
+		} // k for loop
+	}//if grounded
+	if (found==PETSC_FALSE)(*vGLMask[0])(i, j)=0;
+    } // inner for loop (j)
+  } // outer for loop (i)
+// Identifying non groundingline neighbors of groundingline cells
+	for (PetscInt   i = grid.xs ; i < grid.xs+grid.xm ; ++i) {
+    for (PetscInt j = grid.ys ; j < grid.ys+grid.ym ; ++j) {
+	if ((*vGLMask[0])(i,j)!=1){
+		for (PetscInt k=-1;k<2; ++k){
+			for (PetscInt l=-1;l<2; ++l){
+			if ((k==0)&&(l==0))continue;
+			if ((*vGLMask[0])(i+k,j+l)==1){
+ 			 (*vGLMask[0])(i, j) =2; }
+			}// l for loop
+		} // k for loop
+	}//if not groundingline
+    } // inner for loop (j)
+  } // outer for loop (i)
+	
+  ierr =  vMask.end_access(); CHKERRQ(ierr);
+  ierr = vGLMask[0]->end_access(); CHKERRQ(ierr);
+  ierr = vGLMask[1]->begin_access(); CHKERRQ(ierr);
+
+  return 0;
+}
+
 PetscErrorCode IceModel::update_surface_elevation() {
   PetscErrorCode ierr;
 
@@ -118,6 +172,55 @@ PetscErrorCode IceModel::update_surface_elevation() {
   ierr = vMask.end_access(); CHKERRQ(ierr);
 
   return 0;
+}
+
+
+PetscErrorCode IceModel::update_refined_variable(IceModelVec2S &var, IceModelVec2S *var_ref) {
+	PetscErrorCode ierr;
+	ierr =  var.begin_access(); CHKERRQ(ierr);           
+	ierr =  var_ref->begin_access(); CHKERRQ(ierr);
+	ierr =  vGLMask[0]->begin_access(); CHKERRQ(ierr); 
+    for (PetscInt   i = grid.xs ; i < grid.xs+grid.xm ; ++i) {
+       for (PetscInt j = grid.ys ; j < grid.ys+grid.ym ; ++j) {
+			if((( (*vGLMask[0])(i,j)==1)||((*vGLMask[0])(i,j)==2))&&((*vGLMask[1])(i,j)==0)){
+              for (PetscInt   k = i*refinement ;k < (i+1)*refinement ; ++k) {
+  	             for (PetscInt l = j*refinement ; l < (j+1)*refinement; ++l) {
+					(*var_ref)(k,l)=var(i,j); 
+					   //PetscPrintf(grid.com,"\ni:%d j:%d\n\n",k,l); //TODO test
+				   } // "l" for loop
+			  }//"k" for loop
+			}
+			} // "j" for loop
+	   } //"i" for loop
+	ierr =  vGLMask[0]->end_access(); CHKERRQ(ierr); 
+	ierr =  var.end_access(); CHKERRQ(ierr);           
+	ierr =  var_ref->end_access(); CHKERRQ(ierr);
+return 0;
+}
+
+//Refill Variables with recalculated refined values
+PetscErrorCode IceModel::update_unrefined_variable(IceModelVec2S &var, IceModelVec2S *var_ref) {
+PetscErrorCode ierr;
+ierr =  vGLMask[0]->begin_access(); CHKERRQ(ierr);
+ierr =  var.begin_access(); CHKERRQ(ierr);           
+ierr =  var_ref->begin_access(); CHKERRQ(ierr);
+ for (PetscInt   i = grid.xs ; i < grid.xs+grid.xm ; ++i) {
+       for (PetscInt j = grid.ys ; j < grid.ys+grid.ym ; ++j) {	
+ if((*vGLMask[0])(i,j)==1) {
+			 PetscInt temp=0;
+			 for (PetscInt   k = i*refinement ;k < (i+1)*refinement ; ++k) {
+  	             for (PetscInt l = j*refinement ; l < (j+1)*refinement; ++l) {
+					temp+=(*var_ref)(k,l);
+				   } // "l" for loop
+			  }//"k" for loop
+			  var(i,j)=temp/(refinement*refinement);
+			}
+		} // "j" for loop
+ } //"i" for loop
+ierr =  vGLMask[0]->end_access(); CHKERRQ(ierr);
+ierr =  var.end_access(); CHKERRQ(ierr);           
+ierr =  var_ref->end_access(); CHKERRQ(ierr);
+return 0;
 }
 
 //! \brief Adjust ice flow through interfaces of the cell i,j.
@@ -387,6 +490,10 @@ void IceModel::cell_interface_fluxes(bool dirichlet_bc,
 }
 
 
+
+
+
+
 //! Update the thickness from the diffusive flux and sliding velocity, and the surface and basal mass balance rates.
 /*!
   The partial differential equation describing the conservation of mass in the
@@ -470,9 +577,11 @@ dimassdt = surface_ice_flux + basal_ice_flux + sub_shelf_ice_flux + discharge_fl
 Removed commented-out code using the coverage ratio to compute the surface mass
 balance contribution (to reduce clutter). Please see the commit 26330a7 and
 earlier. (CK)
-
 */
+
 PetscErrorCode IceModel::massContExplicitStep() {
+
+	
   PetscErrorCode ierr;
   PetscScalar
     // totals over the processor's domain:
@@ -497,12 +606,30 @@ PetscErrorCode IceModel::massContExplicitStep() {
     total_sum_divQ_SIA = 0,
     total_sum_divQ_SSA = 0,
     total_surface_ice_flux = 0;
+	
 
-  const PetscScalar dx = grid.dx, dy = grid.dy;
+
+  PetscScalar dx = grid.dx, dy = grid.dy;
   bool do_ocean_kill = config.get_flag("ocean_kill"),
+	do_mesh_refinement=config.get_flag("mesh_refinement"),
     floating_ice_killed = config.get_flag("floating_ice_killed"),
     include_bmr_in_continuity = config.get_flag("include_bmr_in_continuity"),
-    compute_cumulative_climatic_mass_balance = config.get_flag("compute_cumulative_climatic_mass_balance");
+    compute_cumulative_climatic_mass_balance = config.get_flag("compute_cumulative_climatic_mass_balance"),
+	do_part_grid = config.get_flag("part_grid"),
+    do_redist = config.get_flag("part_redist");
+
+
+	//update refined mesh
+	 if(config.get_flag("mesh_refinement")){
+	update_refined_variable(vH,vH_ref);
+    update_refined_variable (acab,acab_ref);
+    update_refined_variable (vbmr,vbmr_ref);
+    update_refined_variable (shelfbmassflux,shelfbmassflux_ref);
+	update_refined_variable (vMask,vMask_ref);
+	if(do_part_grid){
+	update_refined_variable(vHref,vHref_ref);
+	}	
+	 }
 
   // FIXME: use corrected cell areas (when available)
   PetscScalar factor = config.get("ice_density") * (dx * dy);
@@ -515,8 +642,20 @@ PetscErrorCode IceModel::massContExplicitStep() {
     ierr = ocean->shelf_base_mass_flux(shelfbmassflux); CHKERRQ(ierr);
   } else { SETERRQ(grid.com, 2, "PISM ERROR: ocean == NULL"); }
 
+  
   IceModelVec2S vHnew = vWork2d[0];
   ierr = vH.copy_to(vHnew); CHKERRQ(ierr);
+
+	IceModelVec2S  *vHnew_ref,
+							*vHnew_ptr;
+
+ PetscScalar *dx_ref,*dy_ref ;
+ if(config.get_flag("mesh_refinement")){
+		dx_ref= &grid_refined->dx;
+		dy_ref= &grid_refined->dy;
+	 vHnew_ref = vWork2d_ref[0];
+	ierr = vH_ref->copy_to(*vHnew_ref); CHKERRQ(ierr);
+}
 
   IceModelVec2Stag *Qdiff;
   ierr = stress_balance->get_diffusive_flux(Qdiff); CHKERRQ(ierr);
@@ -533,9 +672,32 @@ PetscErrorCode IceModel::massContExplicitStep() {
   ierr = vMask.begin_access();  CHKERRQ(ierr);
   ierr = vHnew.begin_access(); CHKERRQ(ierr);
 
+IceModelVec2Stag *Qdiff_ref;
+IceModelVec2V *vel_advective_ref;
+ if(config.get_flag("mesh_refinement")){ 
+/*	 
+  ierr = stress_balance_ref->get_diffusive_flux(Qdiff_ref); CHKERRQ(ierr); //TODO maybe later
+  ierr = stress_balance_ref->get_advective_2d_velocity(vel_advective_ref); CHKERRQ(ierr);
+   ierr = Qdiff_ref->begin_access(); CHKERRQ(ierr);
+  ierr = vel_advective_ref->begin_access(); CHKERRQ(ierr);
+ */
+	 
+	  ierr = vH_ref->begin_access(); CHKERRQ(ierr);
+  ierr = vbmr_ref->begin_access(); CHKERRQ(ierr);
+ 
+  ierr = acab_ref->begin_access(); CHKERRQ(ierr);
+  ierr = shelfbmassflux_ref->begin_access(); CHKERRQ(ierr);
+  ierr = vMask_ref->begin_access();  CHKERRQ(ierr);
+  ierr = vGLMask[0]->begin_access();  CHKERRQ(ierr);
+  ierr = vHnew_ref->begin_access(); CHKERRQ(ierr);
+  if(do_part_grid){
+	ierr = vHref_ref->begin_access(); CHKERRQ(ierr);
+	}
+
+  MaskQuery mask_ref(*vMask_ref);
+ }
+
   // related to PIK part_grid mechanism; see Albrecht et al 2011
-  const bool do_part_grid = config.get_flag("part_grid"),
-    do_redist = config.get_flag("part_redist");
   if (do_part_grid) {
     ierr = vHref.begin_access(); CHKERRQ(ierr);
     if (do_redist) {
@@ -558,14 +720,67 @@ PetscErrorCode IceModel::massContExplicitStep() {
   if (compute_cumulative_climatic_mass_balance) {
     ierr = climatic_mass_balance_cumulative.begin_access(); CHKERRQ(ierr);
   }
-
   MaskQuery mask(vMask);
 
+/*
+struct massContStruct mcs_ref;
+struct massContStruct mcs;
+mcs.acab=&acab;
+mcs.include_bmr_in_continuity=include_bmr_in_continuity;
+mcs.floating_ice_killed=floating_ice_killed;
+mcs.compute_cumulative_climatic_mass_balance=compute_cumulative_climatic_mass_balance;
+*/
+ bool no_refinement_iteration=true;
+ PetscInt *i_ptr,
+			 *j_ptr;
+PetscScalar *dx_ptr,
+				  *dy_ptr;
+PetscPrintf(grid.com,"DURCHLAUF ");
   for (PetscInt i = grid.xs; i < grid.xs + grid.xm; ++i) {
     for (PetscInt j = grid.ys; j < grid.ys + grid.ym; ++j) {
-
+	
+		PetscInt i_ref = refinement*i,
+					j_ref = refinement*j;
+		
+		if(do_mesh_refinement)	{
+			if((*vGLMask[0])(i,j)==1){
+			no_refinement_iteration=false;
+			i_ptr=   &i_ref;		j_ptr=	&j_ref;
+			dx_ptr=dx_ref;		dy_ptr=dy_ref;
+			vH_ptr=vH_ref;
+			vHnew_ptr=vHnew_ref;
+			vHref_ptr=vHref_ref;
+			
+			}
+			else{ 
+			no_refinement_iteration=true;
+			i_ptr=   &i;
+			j_ptr=	&j;
+			dx_ptr=&dx;
+			dy_ptr=&dy;
+			vH_ptr=&vH;	
+			vHnew_ptr=&vHnew;
+			vHref_ptr=&vHref;
+			}
+		}
+		else{
+		no_refinement_iteration=true;
+			i_ptr=   &i;
+			j_ptr=	&j;
+			dx_ptr=&dx;
+			dy_ptr=&dy;
+			vH_ptr=&vH;	
+			vHnew_ptr=&vHnew;
+			vHref_ptr=&vHref;
+		}
+		if (!no_refinement_iteration){PetscPrintf(grid.com,"\n ");} //TODO test
+		 for (; i_ref < (1+i)*refinement; ++i_ref) {
+		for (; j_ref < (1+j)*refinement; ++j_ref) {
+		if (!no_refinement_iteration){PetscPrintf(grid.com,"Iteration: %d, %d Hoehe:%f ",i_ref,j_ref,(*vH_ref)(i_ref,j_ref));} //TODO test
+		if (!no_refinement_iteration){PetscPrintf(grid.com,"Iteration:\nHoehe neu:%f \n ",(*vHnew_ptr)(*i_ptr, *j_ptr));} //TODO test
       // Divergence terms:
-      double divQ_SIA = 0.0, divQ_SSA = 0.0;
+
+double divQ_SIA = 0.0, divQ_SSA = 0.0;
 
       // Source terms:
       double
@@ -593,13 +808,15 @@ PetscErrorCode IceModel::massContExplicitStep() {
         // Staggered grid Div(Q) for diffusive non-sliding SIA deformation part:
         // divQ_SIA = - D grad h
         divQ_SIA = (Q.e - Q.w) / dx + (Q.n - Q.s) / dy;
-
+		//if (no_refinement_iteration){PetscPrintf(grid.com,"divQ B %f\n ",divQ_SIA);} //TODO test 
         // Plug flow part (i.e. basal sliding; from SSA): upwind by staggered grid
         // PIK method;  this is   \nabla \cdot [(u, v) H]
-        divQ_SSA += ( v.e * (v.e > 0 ? vH(i, j) : vH(i + 1, j))
-                      - v.w * (v.w > 0 ? vH(i - 1, j) : vH(i, j)) ) / dx;
-        divQ_SSA += ( v.n * (v.n > 0 ? vH(i, j) : vH(i, j + 1))
-                      - v.s * (v.s > 0 ? vH(i, j - 1) : vH(i, j)) ) / dy;
+        divQ_SSA += ( v.e * (v.e > 0 ? (*vH_ptr)(*i_ptr, *j_ptr) : (*vH_ptr)(*i_ptr+1, *j_ptr))
+                      - v.w * (v.w > 0 ? (*vH_ptr)(*i_ptr-1, *j_ptr) : (*vH_ptr)(*i_ptr, *j_ptr)) ) / (*dx_ptr); 
+		 
+        divQ_SSA += ( v.n * (v.n > 0 ? (*vH_ptr)(*i_ptr, *j_ptr) : (*vH_ptr)(*i_ptr, *j_ptr+1))
+                      - v.s * (v.s > 0 ? (*vH_ptr)(*i_ptr, *j_ptr-1) : (*vH_ptr)(*i_ptr, *j_ptr)) ) / (*dy_ptr);
+		
       }
 
       // Set source terms
@@ -618,28 +835,30 @@ PetscErrorCode IceModel::massContExplicitStep() {
 
           // Add the flow contribution to this partially filled cell.
           H_to_Href_flux = -(divQ_SSA + divQ_SIA) * dt;
-          vHref(i, j) += H_to_Href_flux;
-          if (vHref(i, j) < 0) {
+          (*vHref_ptr)(*i_ptr, *j_ptr) += H_to_Href_flux;
+          if ((*vHref_ptr)(*i_ptr, *j_ptr) < 0) {
             ierr = verbPrintf(3, grid.com,
                               "PISM WARNING: negative Href at (%d,%d)\n",
                               i, j); CHKERRQ(ierr);
 
             // Note: this adds mass!
-            nonneg_rule_flux += vHref(i, j);
-            vHref(i, j) = 0;
+            nonneg_rule_flux += (*vHref_ptr)(*i_ptr, *j_ptr);
+			 
+           (*vHref_ptr)(*i_ptr, *j_ptr) = 0;
+			  
           }
 
           PetscReal H_average = get_average_thickness(do_redist,
                                                       vMask.int_star(i, j),
-                                                      vH.star(i, j)),
-            coverage_ratio = vHref(i, j) / H_average;
+                                                      vH_ptr->star(*i_ptr, *j_ptr)),
+            coverage_ratio = (*vH_ptr)(*i_ptr, *j_ptr) / H_average;
 
           if (coverage_ratio >= 1.0) {
             // A partially filled grid cell is now considered to be full.
             if (do_redist)
-              vHresidual(i, j) = vHref(i, j) - H_average; // residual ice thickness
-
-            vHref(i, j) = 0.0;
+              vHresidual(i, j) = (*vHref_ptr)(*i_ptr, *j_ptr) - H_average; // residual ice thickness
+			  
+            (*vHref_ptr)(*i_ptr, *j_ptr) = 0.0;
 
             Href_to_H_flux = H_average;
 
@@ -672,18 +891,19 @@ PetscErrorCode IceModel::massContExplicitStep() {
         divQ_SIA             = 0.0;
         divQ_SSA             = 0.0;
       }
-
-      vHnew(i, j) += (dt * (surface_mass_balance // accumulation/ablation
+ //if (!no_refinement_iteration){PetscPrintf(grid.com,"Iteration:\nHoeheVorher:%f \n ",(*vHnew_ptr)(*i_ptr, *j_ptr));}
+      (*vHnew_ptr)(*i_ptr, *j_ptr) += (dt * (surface_mass_balance // accumulation/ablation
                             - meltrate_grounded // basal melt rate (grounded)
                             - meltrate_floating // sub-shelf melt rate
                             - (divQ_SIA + divQ_SSA)) // flux divergence
                       + Href_to_H_flux); // corresponds to a cell becoming "full"
+	//		 if (!no_refinement_iteration){PetscPrintf(grid.com,"HoeheNacher:%f \n ",(*vHnew_ptr)(*i_ptr, *j_ptr));}
 
-      if (vHnew(i, j) < 0.0) {
-        nonneg_rule_flux += -vHnew(i, j);
+      if ((*vHnew_ptr)(*i_ptr, *j_ptr) < 0.0) {
+        nonneg_rule_flux += -(*vHnew_ptr)(*i_ptr, *j_ptr); //TODO flux?
 
         // this has to go *after* accounting above!
-        vHnew(i, j) = 0.0;
+        (*vHnew_ptr)(*i_ptr, *j_ptr) = 0.0;
       }
 
       // "Calving" mechanisms
@@ -697,19 +917,19 @@ PetscErrorCode IceModel::massContExplicitStep() {
         // force zero thickness at points which were originally ocean (if "-ocean_kill");
         //   this is calving at original calving front location
         if ( do_ocean_kill && ocean_kill_mask.as_int(i, j) == 1) {
-          ocean_kill_flux = -vHnew(i, j);
+          ocean_kill_flux = -(*vHnew_ptr)(*i_ptr, *j_ptr);
 
           // this has to go *after* accounting above!
-          vHnew(i, j) = 0.0;
+          (*vHnew_ptr)(*i_ptr, *j_ptr) = 0.0;
         }
 
         // force zero thickness at points which are floating (if "-float_kill");
         //   this is calving at grounding line
         if ( floating_ice_killed && mask.ocean(i, j) ) { // FIXME: *was* ocean???
-          float_kill_flux = -vHnew(i, j);
+          float_kill_flux = -(*vHnew_ptr)(*i_ptr, *j_ptr);
 
           // this has to go *after* accounting above!
-          vHnew(i, j) = 0.0;
+          (*vHnew_ptr)(*i_ptr, *j_ptr) = 0.0;
         }
       }
 
@@ -732,9 +952,14 @@ PetscErrorCode IceModel::massContExplicitStep() {
         proc_H_to_Href_flux -= H_to_Href_flux;
         proc_Href_to_H_flux += Href_to_H_flux;
       }
-
+			if (no_refinement_iteration) break;
+			} //end of j_ref loop
+		if (no_refinement_iteration) break;
+		j_ref = refinement*j;
+		} //end of i_ref loop	
     } // end of the inner (j) for loop
   } // end of the outer (i) for loop
+
 
   ierr = vbmr.end_access(); CHKERRQ(ierr);
   ierr = vMask.end_access(); CHKERRQ(ierr);
@@ -744,6 +969,27 @@ PetscErrorCode IceModel::massContExplicitStep() {
   ierr = shelfbmassflux.end_access(); CHKERRQ(ierr);
   ierr = vH.end_access(); CHKERRQ(ierr);
   ierr = vHnew.end_access(); CHKERRQ(ierr);
+
+if(config.get_flag("mesh_refinement")){
+ierr = vbmr_ref->end_access(); CHKERRQ(ierr);
+  ierr = vMask_ref->end_access(); CHKERRQ(ierr);
+  ierr = vGLMask[0]->end_access(); CHKERRQ(ierr);
+	/*
+  ierr = Qdiff_ref->end_access(); CHKERRQ(ierr);
+  ierr = vel_advective_ref->end_access(); CHKERRQ(ierr);
+	*/
+  ierr = acab_ref->end_access(); CHKERRQ(ierr);
+  ierr = shelfbmassflux_ref->end_access(); CHKERRQ(ierr);
+  ierr = vH_ref->end_access(); CHKERRQ(ierr);
+  ierr = vHnew_ref->end_access(); CHKERRQ(ierr);
+  if(do_part_grid){
+	ierr = vHref_ref->end_access(); CHKERRQ(ierr);
+	update_unrefined_variable(vHref, vHref_ref);
+	}
+	
+ update_unrefined_variable(vH, vH_ref);
+ update_unrefined_variable(vHnew,vHnew_ref);
+}	
 
   if (compute_cumulative_climatic_mass_balance) {
     ierr = climatic_mass_balance_cumulative.end_access(); CHKERRQ(ierr);
@@ -796,6 +1042,11 @@ PetscErrorCode IceModel::massContExplicitStep() {
   // finally copy vHnew into vH and communicate ghosted values
   ierr = vHnew.beginGhostComm(vH); CHKERRQ(ierr);
   ierr = vHnew.endGhostComm(vH); CHKERRQ(ierr);
+  if(do_mesh_refinement){
+  ierr = vHnew_ref->beginGhostComm(*vH_ref); CHKERRQ(ierr);
+  ierr = vHnew_ref->endGhostComm(*vH_ref); CHKERRQ(ierr);
+  }
+
 
   // the following calls are new routines adopted from PISM-PIK. The place and
   // order is not clear yet!

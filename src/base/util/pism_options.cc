@@ -329,7 +329,7 @@ PetscErrorCode PISMOptionsStringArray(string opt, string text, string default_va
 
 //! \brief Process a command-line option taking an integer as an argument.
 PetscErrorCode PISMOptionsInt(string option, string text,
-			      PetscInt &result, bool &is_set) {
+			      PetscInt &result, bool &is_set) { //TODO undestand (Mx?)
   PetscErrorCode ierr;
   char str[TEMPORARY_STRING_LENGTH];
   PetscBool flag;
@@ -678,6 +678,7 @@ PetscErrorCode set_config_from_options(MPI_Comm /*com*/, NCConfigVariable &confi
   ierr = config.flag_from_option("eigen_calving", "do_eigen_calving"); CHKERRQ(ierr);
 
   ierr = config.flag_from_option("kill_icebergs", "kill_icebergs"); CHKERRQ(ierr);
+  ierr = config.flag_from_option("mesh_refinement", "mesh_refinement"); CHKERRQ(ierr);
 
   // Output
   ierr = config.flag_from_option("climatic_mass_balance_cumulative", "compute_cumulative_climatic_mass_balance"); CHKERRQ(ierr);

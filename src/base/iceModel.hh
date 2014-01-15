@@ -128,11 +128,11 @@ class IceModel {
   friend class IceModel_Href_to_H_flux;
 public:
   // see iceModel.cc for implementation of constructor and destructor:
-  IceModel(IceGrid &g, NCConfigVariable &config, NCConfigVariable &overrides);
+  IceModel(IceGrid &g, NCConfigVariable &config, NCConfigVariable &overrides,IceGrid* g_ref= NULL);
   virtual ~IceModel(); // must be virtual merely because some members are virtual
 
   // see iMinit.cc
-  virtual PetscErrorCode grid_setup();
+  virtual PetscErrorCode grid_setup(IceGrid &grid,PetscInt refinement=1);
 
   virtual PetscErrorCode allocate_submodels();
   virtual PetscErrorCode allocate_flowlaw();
@@ -145,7 +145,7 @@ public:
   virtual PetscErrorCode allocate_couplers();
 
   virtual PetscErrorCode init_couplers();
-  virtual PetscErrorCode set_grid_from_options();
+  virtual PetscErrorCode set_grid_from_options(IceGrid &grid,PetscInt refinement);
   virtual PetscErrorCode set_grid_defaults();
   virtual PetscErrorCode model_state_setup();
   virtual PetscErrorCode set_vars_from_options();
@@ -190,11 +190,14 @@ public:
 protected:
 
   IceGrid               &grid;
+  IceGrid               *grid_refined;
 
   NCConfigVariable      mapping, //!< grid projection (mapping) parameters
+	mapping_ref,
     &config,			 //!< configuration flags and parameters
     &overrides;			 //!< flags and parameters overriding config, see -config_override
-  NCGlobalAttributes    global_attributes;
+  NCGlobalAttributes    global_attributes,
+	global_attributes_ref;
 
   PISMYieldStress *basal_yield_stress;
   IceBasalResistancePlasticLaw *basal;
@@ -213,9 +216,12 @@ protected:
   // state variables and some diagnostics/internals
   IceModelVec2S vh,		//!< ice surface elevation; ghosted
     vH,		//!< ice thickness; ghosted
+	*vH_ref,			//!<refined ice thickness; ghosted
+	*vH_ptr,			//!< Pointer to the refined/unrefined ice thickness;
     vtauc,		//!< yield stress for basal till (plastic or pseudo-plastic model); ghosted
     vbwat,		//!< thickness of the basal meltwater; ghosted
     vbmr,           //!< rate of production of basal meltwater (ice-equivalent); no ghosts
+	*vbmr_ref,	   //!< rate of production of basal meltwater (ice-equivalent); no ghosts
     vLongitude,	//!< Longitude; ghosted to compute cell areas
     vLatitude,	//!< Latitude; ghosted to compute cell areas
     vbed,		//!< bed topography; ghosted
@@ -223,19 +229,25 @@ protected:
     vGhf,		//!< geothermal flux; no ghosts
     bedtoptemp,     //!< temperature seen by bedrock thermal layer, if present; no ghosts
     vHref,          //!< accumulated mass advected to a partially filled grid cell
+	*vHref_ref,          //!< refinedaccumulated mass advected to a partially filled grid cell
+	*vHref_ptr,          //!< pointer on mass advected to a partially filled grid cell
     vHresidual,     //!< residual ice mass of a not any longer partially (fully) filled grid cell
     acab,		//!< accumulation/ablation rate; no ghosts
+	*acab_ref,		//!< refined accumulation/ablation rate; no ghosts
     climatic_mass_balance_cumulative,    //!< cumulative acab
     artm,		//!< ice temperature at the ice surface but below firn; no ghosts
     liqfrac_surface,    //!< ice liquid water fraction at the top surface of the ice
     shelfbtemp,		//!< ice temperature at the shelf base; no ghosts
     shelfbmassflux,	//!< ice mass flux into the ocean at the shelf base; no ghosts
+	*shelfbmassflux_ref,	//!< ice mass flux into the ocean at the shelf base; no ghosts
     cell_area,		//!< cell areas (computed using the WGS84 datum)
     vPrinStrain1,   //!< major principal component of horizontal strain-rate tensor
     vPrinStrain2;   //!< minor principal component of horizontal strain-rate tensor
 	
   IceModelVec2Int vMask, //!< \brief mask for flow type with values ice_free_bedrock,
                          //!< grounded_ice, floating_ice, ice_free_ocean
+	*vMask_ref,			//!< refined vMask
+	*vGLMask[2],		//!< mask for the grounding line
     ocean_kill_mask,     //!< mask used by the -ocean_kill code 
     vIcebergMask, //!< mask for iceberg identification
 
@@ -246,8 +258,11 @@ protected:
 
   IceModelVec3
         T3,		//!< absolute temperature of ice; K (ghosted)
+	    T3_ref,		//!<refined absolute temperature of ice; K (ghosted)
         Enth3,          //!< enthalpy; J / kg (ghosted)
-        tau3;		//!< age of ice; s (ghosted because it is averaged onto the staggered-grid)
+		Enth3_ref,          //!<refined enthalpy; J / kg (ghosted)
+        tau3,		//!< age of ice; s (ghosted because it is averaged onto the staggered-grid)
+	    tau3_ref;		//!<refined age of ice; s (ghosted because it is averaged onto the staggered-grid)
 
   // parameters
   PetscReal   dt,     //!< mass continuity time step, s
@@ -269,7 +284,8 @@ protected:
     cumulative_sum_divQ_SSA,
     cumulative_Href_to_H_flux,
     cumulative_H_to_Href_flux;
-  PetscInt    skipCountDown;
+  PetscInt    skipCountDown,
+	refinement;
 
   // physical parameters used frequently enough to make looking up via
   // config.get() a hassle; initialized in the IceModel constructor from the
@@ -286,6 +302,7 @@ protected:
   string executable_short_name;
   
 protected:
+
   // see iceModel.cc
   virtual PetscErrorCode createVecs();
   virtual PetscErrorCode deallocate_internal_objects();
@@ -342,7 +359,10 @@ protected:
   // see iMgeometry.cc
   virtual PetscErrorCode updateSurfaceElevationAndMask();
   virtual PetscErrorCode update_mask();
+  virtual PetscErrorCode update_glmask();
   virtual PetscErrorCode update_surface_elevation();
+  virtual PetscErrorCode update_refined_variable(IceModelVec2S &var, IceModelVec2S *var_ref);
+  virtual PetscErrorCode update_unrefined_variable(IceModelVec2S &var, IceModelVec2S *var_ref);
   virtual void cell_interface_fluxes(bool dirichlet_bc,
                                      int i, int j,
                                      planeStar<PISMVector2> input_velocity,
@@ -352,7 +372,10 @@ protected:
   virtual void adjust_flow(planeStar<int> mask,
                            planeStar<PetscScalar> &SSA_velocity,
                            planeStar<PetscScalar> &SIA_flux);
+
   virtual PetscErrorCode massContExplicitStep();
+//virtual PetscErrorCode  	massContExplicitStepIteration(int i, int j,struct massContStruct *mcs);
+
 
   // see iMhydrology.cc
   virtual PetscErrorCode diffuse_bwat();
@@ -421,12 +444,16 @@ protected:
   // working space (a convenience)
   static const PetscInt nWork2d=2;
   IceModelVec2S vWork2d[nWork2d];
+  IceModelVec2S	 * vWork2d_ref[nWork2d];
   IceModelVec2V vWork2dV;
+  IceModelVec2V *vWork2dV_ref;
 
   // 3D working space
   IceModelVec3 vWork3d;
+  IceModelVec3 *vWork3d_ref;
 
   PISMStressBalance *stress_balance;
+  PISMStressBalance *stress_balance_ref;
 
   map<string,PISMDiagnostic*> diagnostics;
   map<string,PISMTSDiagnostic*> ts_diagnostics;

@@ -35,18 +35,26 @@
 #include "IceGrid.hh"
 #include "PISMDiagnostic.hh"
 
-IceModel::IceModel(IceGrid &g, NCConfigVariable &conf, NCConfigVariable &conf_overrides)
-  : grid(g), config(conf), overrides(conf_overrides) {
 
+
+IceModel::IceModel(IceGrid &g, NCConfigVariable &conf, NCConfigVariable &conf_overrides,IceGrid* g_ref)
+  : grid(g) ,grid_refined(g_ref),	 config(conf), overrides(conf_overrides) {
+  
   if (utIsInit() == 0) {
     if (utInit(NULL) != 0) {
       PetscPrintf(grid.com, "PISM ERROR: UDUNITS initialization failed.\n");
       PISMEnd();
     }
   }
-
+  refinement=config.get("refinement_factor");
   mapping.init("mapping", grid.com, grid.rank);
   global_attributes.init("global_attributes", grid.com, grid.rank);
+
+if(config.get_flag("mesh_refinement")){
+ mapping_ref.init("mapping_refined", grid_refined->com, grid_refined->rank);
+  global_attributes_ref.init("global_attributes_refined", grid_refined->com, grid_refined->rank);
+}
+
 
   pism_signal = 0;
   signal(SIGTERM, pism_signal_handler);
@@ -73,9 +81,10 @@ IceModel::IceModel(IceGrid &g, NCConfigVariable &conf, NCConfigVariable &conf_ov
   gmaxu = gmaxv = gmaxw = 0;
 
   // set default locations of soundings and slices
-  id = (grid.Mx - 1)/2;
-  jd = (grid.My - 1)/2;
+  id = (grid.Mx - 1)/2;			//TODO meaning?
+  jd = (grid.My - 1)/2;			//TODO
 
+	  
   // frequently used physical constants and parameters:
   standard_gravity = config.get("standard_gravity");
 
@@ -92,6 +101,7 @@ IceModel::IceModel(IceGrid &g, NCConfigVariable &conf, NCConfigVariable &conf_ov
 
   allowAboveMelting = PETSC_FALSE;  // only IceCompModel ever sets it to true
 }
+
 
 void IceModel::reset_counters() {
   CFLmaxdt = CFLmaxdt2D = 0.0;
@@ -170,14 +180,21 @@ IceModel::~IceModel() {
 PetscErrorCode IceModel::createVecs() {
   PetscErrorCode ierr;
   PetscInt WIDE_STENCIL = grid.max_stencil_width;
-
+  
   ierr = verbPrintf(3, grid.com,
 		    "Allocating memory...\n"); CHKERRQ(ierr);
+
+if(config.get_flag("mesh_refinement")){
+  ierr = verbPrintf(3, grid_refined->com,
+		    "Allocating memory...\n"); CHKERRQ(ierr);
+}
 
   // The following code creates (and documents -- to some extent) the
   // variables. The main (and only) principle here is using standard names from
   // the CF conventions; see
   // http://cf-pcmdi.llnl.gov/documents/cf-standard-names
+// if(config.get_flag("mesh_refinement")){
+	//  PetscPrintf(grid.com, "ERROR: grid periodicity type ' is invalid.\n");
 
   ierr = Enth3.create(grid, "enthalpy", true, WIDE_STENCIL); CHKERRQ(ierr);
   // POSSIBLE standard name = land_ice_enthalpy
@@ -187,14 +204,30 @@ PetscErrorCode IceModel::createVecs() {
                          "J kg-1", ""); CHKERRQ(ierr);
   ierr = variables.add(Enth3); CHKERRQ(ierr);
 
+ if(config.get_flag("mesh_refinement")){
+	 ierr = Enth3_ref.create((*grid_refined), "enthalpy_refined", true, WIDE_STENCIL); CHKERRQ(ierr);
+     ierr = Enth3_ref.set_attrs(
+                         "model_state",
+                         "ice enthalpy (includes sensible heat, latent heat, pressure)",
+                         "J kg-1", ""); CHKERRQ(ierr);
+    ierr = variables.add(Enth3_ref); CHKERRQ(ierr);
+  }
+
+	
   if (config.get_flag("do_cold_ice_methods")) {
     // ice temperature
     ierr = T3.create(grid, "temp", true); CHKERRQ(ierr);
     ierr = T3.set_attrs("model_state", "ice temperature", "K", "land_ice_temperature"); CHKERRQ(ierr);
     ierr = T3.set_attr("valid_min", 0.0); CHKERRQ(ierr);
     ierr = variables.add(T3); CHKERRQ(ierr);
-
     ierr = Enth3.set_attr("pism_intent", "diagnostic"); CHKERRQ(ierr); 
+	 if(config.get_flag("mesh_refinement")){
+        ierr = T3_ref.create(*grid_refined, "temp_refined", true); CHKERRQ(ierr);
+    ierr = T3_ref.set_attrs("diagnostic", "ice temperature", "K", "land_ice_temperature_refined"); CHKERRQ(ierr);
+    ierr = T3_ref.set_attr("valid_min", 0.0); CHKERRQ(ierr);
+    ierr = variables.add(T3_ref); CHKERRQ(ierr);
+    ierr = Enth3_ref.set_attr("pism_intent", "diagnostic"); CHKERRQ(ierr);  
+	 }
   }
 
   // age of ice but only if age will be computed
@@ -222,6 +255,15 @@ PetscErrorCode IceModel::createVecs() {
   ierr = vH.set_attr("valid_min", 0.0); CHKERRQ(ierr);
   ierr = variables.add(vH); CHKERRQ(ierr);
 
+	//refined land ice thickness
+   if(config.get_flag("mesh_refinement")){
+   vH_ref = new IceModelVec2S;
+   ierr = vH_ref->create(*grid_refined, "thk_refined", true, WIDE_STENCIL); CHKERRQ(ierr);
+  ierr = vH_ref->set_attrs("diagnostic", "land ice thickness",
+		      "m", "land_ice_thickness_refined"); CHKERRQ(ierr);
+  ierr = vH_ref->set_attr("valid_min", 0.0); CHKERRQ(ierr);
+  ierr = variables.add(*vH_ref); CHKERRQ(ierr);   
+   }
   // bedrock surface elevation
   ierr = vbed.create(grid, "topg", true, WIDE_STENCIL); CHKERRQ(ierr);
   ierr = vbed.set_attrs("model_state", "bedrock surface elevation",
@@ -245,6 +287,7 @@ PetscErrorCode IceModel::createVecs() {
   } else {
     ierr = vMask.create(grid, "mask", true, WIDE_STENCIL); CHKERRQ(ierr);
   }
+ 
   ierr = vMask.set_attrs("diagnostic", "grounded_dragging_floating integer mask",
 			 "", ""); CHKERRQ(ierr);
   vector<double> mask_values(4);
@@ -258,6 +301,48 @@ PetscErrorCode IceModel::createVecs() {
   vMask.output_data_type = PISM_BYTE;
   ierr = variables.add(vMask); CHKERRQ(ierr);
 
+
+if(config.get_flag("mesh_refinement")){
+if(config.get_flag("do_eigen_calving")) {
+	vMask_ref = new IceModelVec2Int;
+    ierr = vMask_ref->create(*grid_refined, "mask_refined", true, 3); CHKERRQ(ierr); 
+    // The wider stencil is needed for parallel calculation in iMcalving.cc when asking for mask values at the front (offset+1)
+  } else {
+	vMask_ref = new IceModelVec2Int;
+    ierr = vMask_ref->create(*grid_refined, "mask_refined", true, WIDE_STENCIL); CHKERRQ(ierr);
+  }
+  ierr = vMask_ref->set_attrs("diagnostic", "grounded_dragging_floating integer mask_refined",
+			 "", ""); CHKERRQ(ierr);
+  ierr = vMask_ref->set_attr("flag_values", mask_values); CHKERRQ(ierr);
+  ierr = vMask_ref->set_attr("flag_meanings",
+			"ice_free_bedrock grounded_ice floating_ice ice_free_ocean"); CHKERRQ(ierr);
+  vMask_ref->output_data_type = PISM_BYTE;
+  ierr = variables.add(*vMask_ref); CHKERRQ(ierr);
+}
+
+
+// Mask that identifies the groundingline
+ if(config.get_flag("mesh_refinement")){
+for(int i=0;i<2;i++){
+   vGLMask[i] = new  IceModelVec2Int;
+   if (i == 0){
+	ierr = vGLMask[i]->create(grid, "GLmask_new", true, 1); CHKERRQ(ierr);}
+	else{
+	ierr = vGLMask[i]->create(grid, "GLmask_old", true, 1); CHKERRQ(ierr);}
+  ierr = vGLMask[i]->set_attrs("diagnostic", "grounding-line integer mask",
+			 "", ""); CHKERRQ(ierr);
+	 vector<double> glmask_values(2);
+    glmask_values[0] = GLMASK_NO_GROUNDINGLINE;
+    glmask_values[1] = GLMASK_GROUNDINGLINE;
+	glmask_values[2] = GLMASK_GROUNDINGLINE_NEIGHBOR;
+    ierr = vGLMask[i]->set_attr("flag_values", glmask_values); CHKERRQ(ierr);
+    ierr = vGLMask[i]->set_attr("flag_meanings",
+                                 "no_groundingline groundingline groundingline groundingline_neighbor"); CHKERRQ(ierr);
+    vGLMask[i]->output_data_type = PISM_BYTE;
+    ierr = variables.add(*vGLMask[i]); CHKERRQ(ierr);
+ }  //end i loop
+ }  //end mesh refinement
+
   // iceberg identifying integer mask
   if (config.get_flag("kill_icebergs")) {
     ierr = vIcebergMask.create(grid, "IcebergMask", true, WIDE_STENCIL); CHKERRQ(ierr);
@@ -270,7 +355,7 @@ PetscErrorCode IceModel::createVecs() {
     icebergmask_values[2] = ICEBERGMASK_ICEBERG_CAND;
     icebergmask_values[3] = ICEBERGMASK_STOP_OCEAN;
     icebergmask_values[4] = ICEBERGMASK_STOP_ATTACHED;
-    //more values to identify lakes?
+	  //more values to identify lakes?
 
     ierr = vIcebergMask.set_attr("flag_values", icebergmask_values); CHKERRQ(ierr);
     ierr = vIcebergMask.set_attr("flag_meanings",
@@ -333,6 +418,19 @@ PetscErrorCode IceModel::createVecs() {
   vbmr.write_in_glaciological_units = true;
   vbmr.set_attr("comment", "positive basal melt rate corresponds to ice loss");
   ierr = variables.add(vbmr); CHKERRQ(ierr);
+ //refined basal melt rate
+  if(config.get_flag("mesh_refinement")){
+  vbmr_ref= new  IceModelVec2S; 
+ ierr = vbmr_ref->create(*grid_refined, "bmelt_refined", true, WIDE_STENCIL); CHKERRQ(ierr);
+  // ghosted to allow the "redundant" computation of tauc
+  ierr = vbmr_ref->set_attrs("model_state",
+                        "ice basal melt rate in ice thickness per time",
+                        "m s-1", "land_ice_basal_melt_rate_refined"); CHKERRQ(ierr);
+  ierr = vbmr_ref->set_glaciological_units("m year-1"); CHKERRQ(ierr);
+  vbmr_ref->write_in_glaciological_units = true;
+  vbmr_ref->set_attr("comment", "positive basal melt rate corresponds to ice loss");
+  ierr = variables.add(*vbmr_ref); CHKERRQ(ierr);
+  }
 
   // longitude
   ierr = vLongitude.create(grid, "lon", true); CHKERRQ(ierr);
@@ -360,7 +458,16 @@ PetscErrorCode IceModel::createVecs() {
     ierr = vHref.set_attrs("model_state", "temporary ice thickness at calving front boundary",
                            "m", ""); CHKERRQ(ierr);
     ierr = variables.add(vHref); CHKERRQ(ierr);
-
+	  
+	if(config.get_flag("mesh_refinement")){
+	vHref_ref= new IceModelVec2S;
+	ierr = vHref_ref->create(*grid_refined, "vHref_ref", true); CHKERRQ(ierr);
+    ierr = vHref_ref->set_attrs("diagnostic", "refined temporary ice thickness at calving front boundary",
+                           "m", ""); CHKERRQ(ierr);
+    ierr = variables.add(*vHref_ref); CHKERRQ(ierr);
+	
+	}
+	  
     if (config.get_flag("part_redist") == true){
       // Hav
       ierr = vHresidual.create(grid, "Hresidual", true); CHKERRQ(ierr);
@@ -369,6 +476,7 @@ PetscErrorCode IceModel::createVecs() {
       ierr = variables.add(vHresidual); CHKERRQ(ierr);
     }
   }
+
 
   if (config.get_flag("do_eigen_calving") == true) {
     ierr = vPrinStrain1.create(grid, "edot_1", true); CHKERRQ(ierr);
@@ -441,6 +549,22 @@ PetscErrorCode IceModel::createVecs() {
   acab.write_in_glaciological_units = true;
   acab.set_attr("comment", "positive values correspond to ice gain");
 
+if(config.get_flag("mesh_refinement")){
+acab_ref= new  IceModelVec2S;
+ ierr = acab_ref->create(*grid_refined, "climatic_mass_balance_refined", false); CHKERRQ(ierr);
+  ierr = acab_ref->set_attrs(
+                        "climate_from_PISMSurfaceModel",  // FIXME: can we do better?
+                        "ice-equivalent surface mass balance (accumulation/ablation) rate",
+                        "m s-1",  // m *ice-equivalent* per second
+                        "land_ice_surface_specific_mass_balance");  // CF standard_name
+  CHKERRQ(ierr);
+  ierr = acab_ref->set_glaciological_units("m year-1"); CHKERRQ(ierr);
+  acab_ref->write_in_glaciological_units = true;
+  acab_ref->set_attr("comment", "positive values correspond to ice gain");
+}
+
+
+
   if (config.get_flag("compute_cumulative_climatic_mass_balance")) {
     ierr = climatic_mass_balance_cumulative.create(grid, "climatic_mass_balance_cumulative", false); CHKERRQ(ierr);
     ierr = climatic_mass_balance_cumulative.set_attrs("diagnostic",
@@ -478,6 +602,17 @@ PetscErrorCode IceModel::createVecs() {
   ierr = shelfbmassflux.set_glaciological_units("m year-1"); CHKERRQ(ierr);
   // do not add; boundary models are in charge here
   //ierr = variables.add(shelfbmassflux); CHKERRQ(ierr);
+  if(config.get_flag("mesh_refinement")){
+  shelfbmassflux_ref= new  IceModelVec2S;
+  ierr = shelfbmassflux_ref->create(*grid_refined, "shelfbmassflux_refined", false); CHKERRQ(ierr); // no ghosts; NO HOR. DIFF.!
+  ierr = shelfbmassflux_ref->set_attrs(
+                                  "climate_state", "ice mass flux from ice shelf base (positive flux is loss from ice shelf)",
+                                  "m s-1", ""); CHKERRQ(ierr); 
+  // PROPOSED standard name = ice_shelf_basal_specific_mass_balance
+  // rescales from m/s to m/a when writing to NetCDF and std out:
+  shelfbmassflux_ref->write_in_glaciological_units = true;
+  ierr = shelfbmassflux_ref->set_glaciological_units("m year-1"); CHKERRQ(ierr);
+  }	  
 
   // ice boundary tempature at the base of the ice shelf
   ierr = shelfbtemp.create(grid, "shelfbtemp", false); CHKERRQ(ierr); // no ghosts; NO HOR. DIFF.!
@@ -651,8 +786,8 @@ PetscErrorCode IceModel::step(bool do_mass_continuity,
   //!  model; see massContExplicitStep()
   if (do_mass_continuity) {
     ierr = massContExplicitStep(); CHKERRQ(ierr); // update H
-    ierr = updateSurfaceElevationAndMask(); CHKERRQ(ierr); // update h and mask
-
+    ierr = updateSurfaceElevationAndMask(); CHKERRQ(ierr); // update h, grounding line and mask
+		
     // Note that there are three adaptive time-stepping criteria. Two of them
     // (using max. diffusion and 2D CFL) are limiting the mass-continuity
     // time-step and the third (3D CFL) limits the energy and age time-steps.
@@ -685,6 +820,7 @@ PetscErrorCode IceModel::step(bool do_mass_continuity,
     if (vbed.get_state_counter() != topg_state_counter) {
       stdout_flags += "b";
       ierr = updateSurfaceElevationAndMask(); CHKERRQ(ierr);
+	
     } else
       stdout_flags += " ";
     grid.profiler->end(event_beddef);
@@ -845,7 +981,7 @@ PetscErrorCode IceModel::init() {
   PetscErrorCode ierr;
 
   ierr = PetscOptionsBegin(grid.com, "", "PISM options", ""); CHKERRQ(ierr);
-
+	
   // Build PISM with -DPISM_WAIT_FOR_GDB=1 and run with -wait_for_gdb to
   // make it wait for a connection.
 #ifdef PISM_WAIT_FOR_GDB
@@ -855,11 +991,16 @@ PetscErrorCode IceModel::init() {
     ierr = pism_wait_for_gdb(grid.com, 0); CHKERRQ(ierr);
   }
 #endif
+
+
+	
   //! The IceModel initialization sequence is this:
-
   //! 1) Initialize the computational grid:
-  ierr = grid_setup(); CHKERRQ(ierr);
-
+  ierr = grid_setup(grid); CHKERRQ(ierr);
+  if(config.get_flag("mesh_refinement")){
+	ierr = grid_setup(*grid_refined, refinement); CHKERRQ(ierr);
+  }
+	  
   //! 2) Process the options:
   ierr = setFromOptions(); CHKERRQ(ierr);
 
@@ -886,7 +1027,7 @@ PetscErrorCode IceModel::init() {
   ierr = misc_setup();
 
   ierr = PetscOptionsEnd(); CHKERRQ(ierr);
-
+ 
   //! The following flow-chart illustrates the process.
   //!
   //! \dotfile initialization-sequence.dot "IceModel initialization sequence"
