@@ -46,7 +46,7 @@ PetscErrorCode IceModel::updateSurfaceElevationAndMask() {
 
   ierr = update_mask(); CHKERRQ(ierr);
   ierr = update_surface_elevation(); CHKERRQ(ierr);
-	 if(config.get_flag("mesh_refinement")){
+	 if(config.get_flag("mesh_refinement")||config.get_flag("do_glmask")){
    ierr=update_glmask(); CHKERRQ(ierr);
 	 }	 
 

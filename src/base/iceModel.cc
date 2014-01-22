@@ -46,7 +46,7 @@ IceModel::IceModel(IceGrid &g, NCConfigVariable &conf, NCConfigVariable &conf_ov
       PISMEnd();
     }
   }
-  refinement=config.get("refinement_factor");
+  refinement=static_cast<PetscInt>(config.get("refinement_factor"));
   mapping.init("mapping", grid.com, grid.rank);
   global_attributes.init("global_attributes", grid.com, grid.rank);
 
@@ -322,7 +322,8 @@ if(config.get_flag("do_eigen_calving")) {
 
 
 // Mask that identifies the groundingline
- if(config.get_flag("mesh_refinement")){
+ if((config.get_flag("mesh_refinement")) ||(config.get_flag("do_glmask"))){
+	 PetscPrintf(grid.com,"HEY\n\n\n\n\n\n");
 for(int i=0;i<2;i++){
    vGLMask[i] = new  IceModelVec2Int;
    if (i == 0){
@@ -423,7 +424,7 @@ for(int i=0;i<2;i++){
   vbmr_ref= new  IceModelVec2S; 
  ierr = vbmr_ref->create(*grid_refined, "bmelt_refined", true, WIDE_STENCIL); CHKERRQ(ierr);
   // ghosted to allow the "redundant" computation of tauc
-  ierr = vbmr_ref->set_attrs("model_state",
+  ierr = vbmr_ref->set_attrs("diagnostic",
                         "ice basal melt rate in ice thickness per time",
                         "m s-1", "land_ice_basal_melt_rate_refined"); CHKERRQ(ierr);
   ierr = vbmr_ref->set_glaciological_units("m year-1"); CHKERRQ(ierr);

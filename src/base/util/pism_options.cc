@@ -677,8 +677,12 @@ PetscErrorCode set_config_from_options(MPI_Comm /*com*/, NCConfigVariable &confi
   ierr = config.scalar_from_option("eigen_calving_K", "eigen_calving_K"); CHKERRQ(ierr);
   ierr = config.flag_from_option("eigen_calving", "do_eigen_calving"); CHKERRQ(ierr);
 
+  // Mesh refinement
+	
   ierr = config.flag_from_option("kill_icebergs", "kill_icebergs"); CHKERRQ(ierr);
   ierr = config.flag_from_option("mesh_refinement", "mesh_refinement"); CHKERRQ(ierr);
+  ierr = config.flag_from_option("do_glmask", "do_glmask"); CHKERRQ(ierr);
+  ierr = config.scalar_from_option("refinement_factor", "refinement_factor"); CHKERRQ(ierr);
 
   // Output
   ierr = config.flag_from_option("climatic_mass_balance_cumulative", "compute_cumulative_climatic_mass_balance"); CHKERRQ(ierr);
