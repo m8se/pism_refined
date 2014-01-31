@@ -146,7 +146,7 @@ public:
 
   virtual PetscErrorCode init_couplers();
   virtual PetscErrorCode set_grid_from_options(IceGrid &grid,PetscInt refinement);
-  virtual PetscErrorCode set_grid_defaults();
+  virtual PetscErrorCode set_grid_defaults(IceGrid &grid,PetscInt refinement);
   virtual PetscErrorCode model_state_setup();
   virtual PetscErrorCode set_vars_from_options();
   virtual PetscErrorCode allocate_internal_objects();

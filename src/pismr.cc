@@ -78,8 +78,7 @@ int main(int argc, char *argv[]) {
 	IceGrid *g_refined;
 	 if(config.get_flag("mesh_refinement")){
        PetscInt refinement=static_cast<PetscInt>(config.get("refinement_factor"));
-		 PetscPrintf(com,"HUHU:%d\n\n\n\n\n\n",refinement);
-		g_refined=new IceGrid(com,rank,size,config,refinement);	    //create a refined mesh 
+	  g_refined=new IceGrid(com,rank,size,config,refinement);	    //create a refined mesh 
 	   m = new IceModel(g, config, overrides,g_refined);
 		 }
 	  else{

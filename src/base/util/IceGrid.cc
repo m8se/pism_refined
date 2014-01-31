@@ -65,7 +65,7 @@ IceGrid::IceGrid(MPI_Comm c, PetscMPIInt r, PetscMPIInt s,
   Lx  = config.get("grid_Lx");///refinement_factor;
   Ly  = config.get("grid_Ly");///refinement_factor;
   Lz  = config.get("grid_Lz");
-
+	  
   lambda = config.get("grid_lambda");
 
   Mx  = (static_cast<PetscInt>(config.get("grid_Mx"))-1)*refinement_factor+1;
@@ -491,7 +491,6 @@ PetscErrorCode IceGrid::compute_horizontal_spacing() {
   } else {
     dy = 2.0 * Ly / (My - 1);
   }
-
   compute_horizontal_coordinates();
 
   return 0;

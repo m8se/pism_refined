@@ -52,7 +52,7 @@
   Derived classes (IceCompModel, for example) reimplement this to change the
   grid initialization when no -i option is set.
  */
-PetscErrorCode IceModel::set_grid_defaults() {
+PetscErrorCode IceModel::set_grid_defaults(IceGrid &grid,PetscInt refinement) {
   PetscErrorCode ierr;
   bool Mx_set, My_set, Mz_set, Lz_set, boot_file_set;
   string filename;
@@ -159,7 +159,11 @@ PetscErrorCode IceModel::set_grid_defaults() {
 		      "PISM WARNING: -Lz is not set; trying to deduce it using the bootstrapping file...\n");
     CHKERRQ(ierr);
   }
-
+if (refinement!=1){
+grid.My=(grid.My-1)*refinement+1;
+grid.Mx=(grid.Mx-1)*refinement+1;
+}
+	
   return 0;
 }
 
@@ -185,7 +189,6 @@ PetscErrorCode IceModel::set_grid_from_options(IceGrid &grid,PetscInt refinement
   // Vertical extent (in the ice):
   ierr = PISMOptionsReal("-Lz", "Grid extent in the Z (vertical) direction in the ice, in meters",
 			 z_scale,  Lz_set); CHKERRQ(ierr);
-
   // Read -Mx, -My, -Mz and -Mbz.
   ierr = PISMOptionsInt("-My", "Number of grid points in the X direction",
 			grid.My, My_set); CHKERRQ(ierr);
@@ -369,7 +372,8 @@ grid_setup(IceGrid& grid ,PetscInt refinement) {
     ierr = ignore_option(grid.com, "-z_spacing"); CHKERRQ(ierr);
     ierr = ignore_option(grid.com, "-zb_spacing"); CHKERRQ(ierr);
   } else {
-    ierr = set_grid_defaults(); CHKERRQ(ierr);
+	
+    ierr = set_grid_defaults(grid, refinement); CHKERRQ(ierr);
     ierr = set_grid_from_options(grid, refinement); CHKERRQ(ierr);
   }
 

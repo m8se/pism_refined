@@ -46,9 +46,7 @@ PetscErrorCode IceModel::updateSurfaceElevationAndMask() {
 
   ierr = update_mask(); CHKERRQ(ierr);
   ierr = update_surface_elevation(); CHKERRQ(ierr);
-	 if(config.get_flag("mesh_refinement")||config.get_flag("do_glmask")){
-   ierr=update_glmask(); CHKERRQ(ierr);
-	 }	 
+		 
 
   if (config.get_flag("kill_icebergs")) {
     ierr = killIceBergs(); CHKERRQ(ierr);
@@ -90,7 +88,6 @@ PetscErrorCode IceModel::update_mask() {
 
 PetscErrorCode IceModel::update_glmask() {
   PetscErrorCode ierr;
-
   if (ocean == PETSC_NULL) {
     SETERRQ(grid.com, 1, "PISM ERROR: ocean == PETSC_NULL");
   }
@@ -117,7 +114,9 @@ ierr = vGLMask[0]->copy_to(*vGLMask[1]); CHKERRQ(ierr);
 	if (found==PETSC_FALSE)(*vGLMask[0])(i, j)=0;
     } // inner for loop (j)
   } // outer for loop (i)
-// Identifying non groundingline neighbors of groundingline cells
+// Adding direct neighbors of grounding line cells
+	//TODO
+// Identifying non grounding line neighbors of grounding line cells
 	for (PetscInt   i = grid.xs ; i < grid.xs+grid.xm ; ++i) {
     for (PetscInt j = grid.ys ; j < grid.ys+grid.ym ; ++j) {
 	if ((*vGLMask[0])(i,j)!=1){
@@ -135,7 +134,6 @@ ierr = vGLMask[0]->copy_to(*vGLMask[1]); CHKERRQ(ierr);
   ierr =  vMask.end_access(); CHKERRQ(ierr);
   ierr = vGLMask[0]->end_access(); CHKERRQ(ierr);
   ierr = vGLMask[1]->begin_access(); CHKERRQ(ierr);
-
   return 0;
 }
 
@@ -182,11 +180,10 @@ PetscErrorCode IceModel::update_refined_variable(IceModelVec2S &var, IceModelVec
 	ierr =  vGLMask[0]->begin_access(); CHKERRQ(ierr); 
     for (PetscInt   i = grid.xs ; i < grid.xs+grid.xm ; ++i) {
        for (PetscInt j = grid.ys ; j < grid.ys+grid.ym ; ++j) {
-			if((( (*vGLMask[0])(i,j)==1)||((*vGLMask[0])(i,j)==2))&&((*vGLMask[1])(i,j)==0)){
+			if((( (*vGLMask[0])(i,j)==1)||((*vGLMask[0])(i,j)==2))&&((*vGLMask[1])(i,j)==0||(*vGLMask[1])(i,j)==2)){
               for (PetscInt   k = i*refinement ;k < (i+1)*refinement ; ++k) {
-  	             for (PetscInt l = j*refinement ; l < (j+1)*refinement; ++l) {
+  	             for (PetscInt l = j*refinement ; l < (j+1)*refinement; ++l) {  
 					(*var_ref)(k,l)=var(i,j); 
-					   //PetscPrintf(grid.com,"\ni:%d j:%d\n\n",k,l); //TODO test
 				   } // "l" for loop
 			  }//"k" for loop
 			}
@@ -207,7 +204,7 @@ ierr =  var_ref->begin_access(); CHKERRQ(ierr);
  for (PetscInt   i = grid.xs ; i < grid.xs+grid.xm ; ++i) {
        for (PetscInt j = grid.ys ; j < grid.ys+grid.ym ; ++j) {	
  if((*vGLMask[0])(i,j)==1) {
-			 PetscInt temp=0;
+			 PetscScalar temp=0;
 			 for (PetscInt   k = i*refinement ;k < (i+1)*refinement ; ++k) {
   	             for (PetscInt l = j*refinement ; l < (j+1)*refinement; ++l) {
 					temp+=(*var_ref)(k,l);
@@ -618,7 +615,9 @@ PetscErrorCode IceModel::massContExplicitStep() {
 	do_part_grid = config.get_flag("part_grid"),
     do_redist = config.get_flag("part_redist");
 
-
+	  if(config.get_flag("mesh_refinement")||config.get_flag("do_glmask")){
+   ierr=update_glmask(); CHKERRQ(ierr);
+	 }
 	//update refined mesh
 	 if(config.get_flag("mesh_refinement")){
 	update_refined_variable(vH,vH_ref);
@@ -648,15 +647,14 @@ PetscErrorCode IceModel::massContExplicitStep() {
 
 	IceModelVec2S  *vHnew_ref,
 							*vHnew_ptr;
-
  PetscScalar *dx_ref,*dy_ref ;
  if(config.get_flag("mesh_refinement")){
-		dx_ref= &grid_refined->dx;
-		dy_ref= &grid_refined->dy;
+		dx_ref=&grid_refined->dx;
+		dy_ref=&grid_refined->dy;
+	 
 	 vHnew_ref = vWork2d_ref[0];
 	ierr = vH_ref->copy_to(*vHnew_ref); CHKERRQ(ierr);
 }
-
   IceModelVec2Stag *Qdiff;
   ierr = stress_balance->get_diffusive_flux(Qdiff); CHKERRQ(ierr);
 
@@ -674,6 +672,9 @@ PetscErrorCode IceModel::massContExplicitStep() {
 
 IceModelVec2Stag *Qdiff_ref;
 IceModelVec2V *vel_advective_ref;
+ if(config.get_flag("mesh_refinement")||config.get_flag("do_glmask")){ 
+ierr = vGLMask[0]->begin_access();  CHKERRQ(ierr);
+ }
  if(config.get_flag("mesh_refinement")){ 
 /*	 
   ierr = stress_balance_ref->get_diffusive_flux(Qdiff_ref); CHKERRQ(ierr); //TODO maybe later
@@ -688,7 +689,6 @@ IceModelVec2V *vel_advective_ref;
   ierr = acab_ref->begin_access(); CHKERRQ(ierr);
   ierr = shelfbmassflux_ref->begin_access(); CHKERRQ(ierr);
   ierr = vMask_ref->begin_access();  CHKERRQ(ierr);
-  ierr = vGLMask[0]->begin_access();  CHKERRQ(ierr);
   ierr = vHnew_ref->begin_access(); CHKERRQ(ierr);
   if(do_part_grid){
 	ierr = vHref_ref->begin_access(); CHKERRQ(ierr);
@@ -735,7 +735,9 @@ mcs.compute_cumulative_climatic_mass_balance=compute_cumulative_climatic_mass_ba
 			 *j_ptr;
 PetscScalar *dx_ptr,
 				  *dy_ptr;
+PetscInt weighting;
 PetscPrintf(grid.com,"DURCHLAUF ");
+PetscPrintf(grid.com,"Hoehe: %f  GL:%f \n",vH(200,3),(*vGLMask[0])(200,3));
   for (PetscInt i = grid.xs; i < grid.xs + grid.xm; ++i) {
     for (PetscInt j = grid.ys; j < grid.ys + grid.ym; ++j) {
 	
@@ -744,13 +746,15 @@ PetscPrintf(grid.com,"DURCHLAUF ");
 		
 		if(do_mesh_refinement)	{
 			if((*vGLMask[0])(i,j)==1){
+			//PetscPrintf(grid.com,"GLPos:%d %d\n",i,j);
 			no_refinement_iteration=false;
 			i_ptr=   &i_ref;		j_ptr=	&j_ref;
-			dx_ptr=dx_ref;		dy_ptr=dy_ref;
+			dx_ptr=&dx;
+			dy_ptr=&dy;
 			vH_ptr=vH_ref;
 			vHnew_ptr=vHnew_ref;
 			vHref_ptr=vHref_ref;
-			
+			weighting=refinement*refinement;
 			}
 			else{ 
 			no_refinement_iteration=true;
@@ -761,6 +765,7 @@ PetscPrintf(grid.com,"DURCHLAUF ");
 			vH_ptr=&vH;	
 			vHnew_ptr=&vHnew;
 			vHref_ptr=&vHref;
+			weighting=1;
 			}
 		}
 		else{
@@ -772,14 +777,21 @@ PetscPrintf(grid.com,"DURCHLAUF ");
 			vH_ptr=&vH;	
 			vHnew_ptr=&vHnew;
 			vHref_ptr=&vHref;
+			weighting=1;   
 		}
-		if (!no_refinement_iteration){PetscPrintf(grid.com,"\n ");} //TODO test
+		
+		//if (!no_refinement_iteration){PetscPrintf(grid.com,"\n ");} //TODO test
 		 for (; i_ref < (1+i)*refinement; ++i_ref) {
 		for (; j_ref < (1+j)*refinement; ++j_ref) {
-		if (!no_refinement_iteration){PetscPrintf(grid.com,"Iteration: %d, %d Hoehe:%f ",i_ref,j_ref,(*vH_ref)(i_ref,j_ref));} //TODO test
-		if (!no_refinement_iteration){PetscPrintf(grid.com,"Iteration:\nHoehe neu:%f \n ",(*vHnew_ptr)(*i_ptr, *j_ptr));} //TODO test
+		//if (!no_refinement_iteration){PetscPrintf(grid.com,"Iteration: %d, %d Hoehe:%f ",i_ref,j_ref,(*vH_ref)(i_ref,j_ref));} //TODO test
+		//if (!no_refinement_iteration){PetscPrintf(grid.com,"Iteration:\nHoehe neu:%f \n ",(*vHnew_ptr)(*i_ptr, *j_ptr));} //TODO test
       // Divergence terms:
 
+	/*if (*dx_ref!=dx||*dy_ref!=dy ){//TODO test
+			PetscPrintf(grid.com,"ACHTUNG!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! %f %f %f %f  %f\n\n\n",*dx_ref,dx,*dy_ref,dy,dx );
+		}*/
+
+	
 double divQ_SIA = 0.0, divQ_SSA = 0.0;
 
       // Source terms:
@@ -869,7 +881,7 @@ double divQ_SIA = 0.0, divQ_SSA = 0.0;
           }
 
           // In this case the SSA flux goes into the Href variable and does not
-          // directly contribute to ice thickness at this location.
+          // directly contribute to ice thickness at this location
           proc_sum_divQ_SIA += - divQ_SIA;
           proc_sum_divQ_SSA += - divQ_SSA;
           divQ_SIA = divQ_SSA = 0;
@@ -891,13 +903,15 @@ double divQ_SIA = 0.0, divQ_SSA = 0.0;
         divQ_SIA             = 0.0;
         divQ_SSA             = 0.0;
       }
- //if (!no_refinement_iteration){PetscPrintf(grid.com,"Iteration:\nHoeheVorher:%f \n ",(*vHnew_ptr)(*i_ptr, *j_ptr));}
+
+			
+ //if ((*vGLMask[0])(i,j)==1){PetscPrintf(grid.com,"Werte:: %f, %f, %f,H: %f \n ",1000*surface_mass_balance,
+   //                                       1000*divQ_SIA, 1000*divQ_SSA,(*vHnew_ptr)(*i_ptr, *j_ptr));}
       (*vHnew_ptr)(*i_ptr, *j_ptr) += (dt * (surface_mass_balance // accumulation/ablation
                             - meltrate_grounded // basal melt rate (grounded)
                             - meltrate_floating // sub-shelf melt rate
                             - (divQ_SIA + divQ_SSA)) // flux divergence
                       + Href_to_H_flux); // corresponds to a cell becoming "full"
-	//		 if (!no_refinement_iteration){PetscPrintf(grid.com,"HoeheNacher:%f \n ",(*vHnew_ptr)(*i_ptr, *j_ptr));}
 
       if ((*vHnew_ptr)(*i_ptr, *j_ptr) < 0.0) {
         nonneg_rule_flux += -(*vHnew_ptr)(*i_ptr, *j_ptr); //TODO flux?
@@ -940,17 +954,18 @@ double divQ_SIA = 0.0, divQ_SSA = 0.0;
       }
 
       // accounting:
-      {
-        proc_grounded_basal_ice_flux -= meltrate_grounded;
-        proc_sub_shelf_ice_flux      -= meltrate_floating;
-        proc_surface_ice_flux        += surface_mass_balance;
-        proc_float_kill_flux         += float_kill_flux;
-        proc_ocean_kill_flux         += ocean_kill_flux;
-        proc_nonneg_rule_flux        += nonneg_rule_flux;
-        proc_sum_divQ_SIA += - divQ_SIA;
-        proc_sum_divQ_SSA += - divQ_SSA;
-        proc_H_to_Href_flux -= H_to_Href_flux;
-        proc_Href_to_H_flux += Href_to_H_flux;
+      { 
+		
+        proc_grounded_basal_ice_flux -= meltrate_grounded/(refinement*refinement);
+        proc_sub_shelf_ice_flux      -= meltrate_floating/weighting;
+        proc_surface_ice_flux        += surface_mass_balance/weighting;
+        proc_float_kill_flux         += float_kill_flux/weighting;
+        proc_ocean_kill_flux         += ocean_kill_flux/weighting;
+        proc_nonneg_rule_flux        += nonneg_rule_flux/weighting;
+        proc_sum_divQ_SIA += - divQ_SIA/weighting;
+        proc_sum_divQ_SSA += - divQ_SSA/weighting;
+        proc_H_to_Href_flux -= H_to_Href_flux/weighting;
+        proc_Href_to_H_flux += Href_to_H_flux/weighting;
       }
 			if (no_refinement_iteration) break;
 			} //end of j_ref loop
@@ -960,7 +975,6 @@ double divQ_SIA = 0.0, divQ_SSA = 0.0;
     } // end of the inner (j) for loop
   } // end of the outer (i) for loop
 
-
   ierr = vbmr.end_access(); CHKERRQ(ierr);
   ierr = vMask.end_access(); CHKERRQ(ierr);
   ierr = Qdiff->end_access(); CHKERRQ(ierr);
@@ -969,11 +983,13 @@ double divQ_SIA = 0.0, divQ_SSA = 0.0;
   ierr = shelfbmassflux.end_access(); CHKERRQ(ierr);
   ierr = vH.end_access(); CHKERRQ(ierr);
   ierr = vHnew.end_access(); CHKERRQ(ierr);
-
+    
+ if(config.get_flag("mesh_refinement")||config.get_flag("do_glmask")){ 
+ierr = vGLMask[0]->end_access();  CHKERRQ(ierr);
+ }    
 if(config.get_flag("mesh_refinement")){
 ierr = vbmr_ref->end_access(); CHKERRQ(ierr);
   ierr = vMask_ref->end_access(); CHKERRQ(ierr);
-  ierr = vGLMask[0]->end_access(); CHKERRQ(ierr);
 	/*
   ierr = Qdiff_ref->end_access(); CHKERRQ(ierr);
   ierr = vel_advective_ref->end_access(); CHKERRQ(ierr);
@@ -984,11 +1000,11 @@ ierr = vbmr_ref->end_access(); CHKERRQ(ierr);
   ierr = vHnew_ref->end_access(); CHKERRQ(ierr);
   if(do_part_grid){
 	ierr = vHref_ref->end_access(); CHKERRQ(ierr);
-	update_unrefined_variable(vHref, vHref_ref);
+	//update_unrefined_variable(vHref, vHref_ref);
 	}
 	
  update_unrefined_variable(vH, vH_ref);
- update_unrefined_variable(vHnew,vHnew_ref);
+update_unrefined_variable(vHnew,vHnew_ref);
 }	
 
   if (compute_cumulative_climatic_mass_balance) {

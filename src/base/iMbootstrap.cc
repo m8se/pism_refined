@@ -183,9 +183,10 @@ PetscErrorCode IceModel::bootstrap_2d(string filename) {
     ierr = vIcebergMask.set(ICEBERGMASK_NOT_SET); CHKERRQ(ierr);
   }
 
-	 if (config.get_flag("mesh_refinement")) {
+	//TODO update?
+	/* if (config.get_flag("mesh_refinement")) {
    ierr = update_glmask(); CHKERRQ(ierr); // update grounding line
-  }
+  }*/
 
   if (config.get_flag("do_eigen_calving")) {
     // will be updated in updateSurfaceElevationAndMask()
